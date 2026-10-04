@@ -1,0 +1,75 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    name: Build & Artifact Generation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify Code Syntax and Lint
+        run: |
+          python -m compileall main.py
+
+      - name: Create Build Artifact
+        run: |
+          mkdir -p dist
+          tar -czf dist/app_artifact.tar.gz main.py requirements.txt Dockerfile prometheus.yml docker-compose.yml
+
+      - name: Save Artifact (Upload)
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifact
+          path: dist/app_artifact.tar.gz
+          retention-days: 7
+
+  package-and-test:
+    name: Container Packaging & Healthcheck
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifact
+          path: .
+
+      - name: Extract Artifact
+        run: |
+          tar -xzf app_artifact.tar.gz
+
+      - name: Build Docker Image
+        run: |
+          docker build -t devops-app:${{ github.sha }} .
+
+      - name: Spin up Test Environment
+        run: |
+          docker compose up -d --build
+
+      - name: Wait for Services Initialization
+        run: |
+          sleep 7
+
+      - name: Execute Healthcheck Validation
+        run: |
+          curl --fail --retry 3 --retry-delay 2 http://localhost:8000/health
+          curl --fail --retry 3 --retry-delay 2 http://localhost:8000/metrics
+
+      - name: Teardown Environment
+        if: always()
+        run: |
+          docker compose down
