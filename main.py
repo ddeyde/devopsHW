@@ -4,168 +4,231 @@ import psutil
 import time
 from collections import deque
 
-app = FastAPI(title="DevOps Homework App")
+app = FastAPI(title="Metrics Dashboard")
 
-# Время старта приложения
 START_TIME = time.time()
-
-# Очередь для хранения меток времени каждого визита
-# Нужна для подсчета «посещений в час»
 visit_timestamps = deque()
+action_counter = 0
 
-# Счетчик кликов по кнопке
-click_counter = 0
-
-def clean_old_visits():
-    """Удаляет метки посещений старше 1 часа (3600 секунд)"""
-    current_time = time.time()
-    one_hour_ago = current_time - 3600
-    while visit_timestamps and visit_timestamps[0] < one_hour_ago:
+def prune_stale_visits():
+    limit = time.time() - 3600
+    while visit_timestamps and visit_timestamps[0] < limit:
         visit_timestamps.popleft()
 
 @app.middleware("http")
-async def track_visits(request, call_next):
-    """Этот посредник срабатывает на каждый входящий запрос"""
-    # Не считаем за визит запрос favicon и системный healthcheck
+async def collect_visit_metrics(request, call_next):
     if request.url.path not in ["/favicon.ico", "/health"]:
         visit_timestamps.append(time.time())
-        clean_old_visits()
-    response = await call_next(request)
-    return response
+        prune_stale_visits()
+    return await call_next(request)
 
-# 1. ТРЕБОВАНИЕ: Health check
 @app.get("/health")
-def health_check():
+def healthcheck():
     return {
         "status": "healthy",
-        "uptime_seconds": int(time.time() - START_TIME)
+        "uptime": int(time.time() - START_TIME)
     }
 
-# 2. ТРЕБОВАНИЕ: Интерфейс с кнопкой, который можно потыкать
-@app.get("/", response_class=HTMLResponse)
-def index_page():
-    clean_old_visits()
-    visits_last_hour = len(visit_timestamps)
+@app.post("/api/action")
+def trigger_action():
+    global action_counter
+    action_counter += 1
+    return HTMLResponse("<script>window.location.href='/';</script>")
 
-    # Замеряем системные ресурсы
-    cpu_percent = psutil.cpu_percent(interval=None)
-    memory = psutil.virtual_memory()
-    mem_used_mb = int(memory.used / (1024 * 1024))
-    mem_total_mb = int(memory.total / (1024 * 1024))
+@app.get("/metrics", response_class=PlainTextResponse)
+def export_prometheus_metrics():
+    prune_stale_visits()
+    cpu = psutil.cpu_percent(interval=None)
+    mem = psutil.virtual_memory()
+
+    return (
+        f"# HELP system_cpu_usage_percent CPU load in percent\n"
+        f"# TYPE system_cpu_usage_percent gauge\n"
+        f"system_cpu_usage_percent {cpu}\n\n"
+        f"# HELP system_memory_used_bytes Used RAM in bytes\n"
+        f"# TYPE system_memory_used_bytes gauge\n"
+        f"system_memory_used_bytes {mem.used}\n\n"
+        f"# HELP system_memory_total_bytes Total RAM in bytes\n"
+        f"# TYPE system_memory_total_bytes gauge\n"
+        f"system_memory_total_bytes {mem.total}\n\n"
+        f"# HELP app_requests_per_hour Total HTTP requests in the last hour\n"
+        f"# TYPE app_requests_per_hour gauge\n"
+        f"app_requests_per_hour {len(visit_timestamps)}\n\n"
+        f"# HELP app_actions_total Total manual actions executed\n"
+        f"# TYPE app_actions_total counter\n"
+        f"app_actions_total {action_counter}\n"
+    )
+
+@app.get("/", response_class=HTMLResponse)
+def render_dashboard():
+    prune_stale_visits()
+    cpu = psutil.cpu_percent(interval=None)
+    mem = psutil.virtual_memory()
+    uptime_sec = int(time.time() - START_TIME)
 
     return f"""
     <!DOCTYPE html>
-    <html lang="ru">
+    <html lang="en">
     <head>
         <meta charset="UTF-8">
-        <title>DevOps App Dashboard</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Control Panel | System Metrics</title>
         <style>
+            :root {{
+                --bg: #090a0f;
+                --surface: #111318;
+                --border: #1f242f;
+                --text-main: #f1f5f9;
+                --text-muted: #94a3b8;
+                --accent: #2563eb;
+                --accent-hover: #1d4ed8;
+                --success: #10b981;
+            }}
+            * {{ box-sizing: border-box; margin: 0; padding: 0; }}
             body {{
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                background: #0f172a;
-                color: #f8fafc;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                background-color: var(--bg);
+                color: var(--text-main);
                 display: flex;
-                flex-direction: column;
+                justify-content: center;
                 align-items: center;
-                padding: 40px;
-                margin: 0;
-            }}
-            .card {{
-                background: #1e293b;
-                border-radius: 12px;
+                min-height: 100vh;
                 padding: 24px;
-                box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-                width: 100%;
-                max-width: 500px;
-                margin-bottom: 20px;
             }}
-            h1 {{ margin-top: 0; color: #38bdf8; font-size: 24px; }}
-            .metric {{
+            .container {{
+                width: 100%;
+                max-width: 640px;
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                padding: 32px;
+            }}
+            header {{
                 display: flex;
                 justify-content: space-between;
-                padding: 8px 0;
-                border-bottom: 1px solid #334155;
+                align-items: center;
+                margin-bottom: 24px;
+                padding-bottom: 16px;
+                border-bottom: 1px solid var(--border);
             }}
-            .metric:last-child {{ border-bottom: none; }}
-            .value {{ font-weight: bold; color: #4ade80; }}
+            h1 {{ font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }}
+            .badge {{
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                font-size: 12px;
+                font-weight: 500;
+                color: var(--success);
+                background: rgba(16, 185, 129, 0.1);
+                border: 1px solid rgba(16, 185, 129, 0.2);
+                padding: 4px 10px;
+                border-radius: 999px;
+            }}
+            .badge-dot {{
+                width: 6px;
+                height: 6px;
+                background: var(--success);
+                border-radius: 50%;
+            }}
+            .grid {{
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 16px;
+                margin-bottom: 24px;
+            }}
+            .card {{
+                background: rgba(255, 255, 255, 0.02);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 16px;
+            }}
+            .card-title {{
+                font-size: 12px;
+                color: var(--text-muted);
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                margin-bottom: 8px;
+            }}
+            .card-value {{
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size: 20px;
+                font-weight: 600;
+            }}
+            .action-panel {{
+                margin-bottom: 24px;
+            }}
             button {{
-                background: #0284c7;
-                color: white;
-                border: none;
-                padding: 12px 24px;
-                border-radius: 8px;
-                font-size: 16px;
-                cursor: pointer;
                 width: 100%;
-                transition: background 0.2s;
+                background: var(--accent);
+                color: #ffffff;
+                border: none;
+                border-radius: 6px;
+                padding: 12px;
+                font-size: 14px;
+                font-weight: 500;
+                cursor: pointer;
+                transition: background 0.15s ease;
             }}
-            button:hover {{ background: #0369a1; }}
-            a {{ color: #38bdf8; text-decoration: none; }}
+            button:hover {{ background: var(--accent-hover); }}
+            footer {{
+                display: flex;
+                justify-content: space-between;
+                font-size: 12px;
+                color: var(--text-muted);
+                padding-top: 16px;
+                border-top: 1px solid var(--border);
+            }}
+            footer a {{
+                color: var(--text-muted);
+                text-decoration: none;
+                margin-left: 12px;
+            }}
+            footer a:hover {{ color: var(--text-main); }}
         </style>
     </head>
     <body>
-        <div class="card">
-            <h1>🚀 DevOps Homework App</h1>
-            <p>Статус сервиса: <span class="value">ONLINE</span></p>
-            
-            <form action="/click" method="post">
-                <button type="submit">Тыкни меня! (Кликов: {click_counter})</button>
-            </form>
-        </div>
+        <div class="container">
+            <header>
+                <h1>Node Operations Dashboard</h1>
+                <div class="badge">
+                    <span class="badge-dot"></span>
+                    ONLINE
+                </div>
+            </header>
 
-        <div class="card">
-            <h3>📊 Мониторинг (Текущие метрики)</h3>
-            <div class="metric">
-                <span>Загрузка CPU:</span>
-                <span class="value">{cpu_percent}%</span>
-            </div>
-            <div class="metric">
-                <span>Память (RAM занято / всего):</span>
-                <span class="value">{mem_used_mb} МБ / {mem_total_mb} МБ</span>
-            </div>
-            <div class="metric">
-                <span>Посещений за последний час:</span>
-                <span class="value">{visits_last_hour}</span>
-            </div>
-        </div>
+            <section class="grid">
+                <div class="card">
+                    <div class="card-title">CPU Load</div>
+                    <div class="card-value">{cpu}%</div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Memory Allocation</div>
+                    <div class="card-value">{int(mem.used / 1048576)} / {int(mem.total / 1048576)} MB</div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Hourly Traffic</div>
+                    <div class="card-value">{len(visit_timestamps)} req/h</div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Total Invocations</div>
+                    <div class="card-value">{action_counter}</div>
+                </div>
+            </section>
 
-        <div style="font-size: 14px;">
-            Эндпоинты: <a href="/health" target="_blank">/health</a> | 
-            <a href="/metrics" target="_blank">/metrics</a>
+            <section class="action-panel">
+                <form action="/api/action" method="post">
+                    <button type="submit">Dispatch Execution Event</button>
+                </form>
+            </section>
+
+            <footer>
+                <span>Uptime: {uptime_sec}s</span>
+                <div>
+                    <a href="/health" target="_blank">Healthcheck</a>
+                    <a href="/metrics" target="_blank">Raw Metrics</a>
+                </div>
+            </footer>
         </div>
     </body>
     </html>
     """
-
-@app.post("/click")
-def handle_click():
-    global click_counter
-    click_counter += 1
-    # Возвращаемся обратно на главную страницу
-    return HTMLResponse("<script>window.location.href='/';</script>")
-
-# 3. ТРЕБОВАНИЕ: Метрики в стандартном формате Prometheus
-@app.get("/metrics", response_class=PlainTextResponse)
-def metrics():
-    clean_old_visits()
-    cpu = psutil.cpu_percent(interval=None)
-    mem = psutil.virtual_memory()
-    
-    # Формат вывода понятен стандартным системам мониторинга (Prometheus)
-    return (
-        f"# HELP app_cpu_usage_percent Текущий процент CPU\n"
-        f"# TYPE app_cpu_usage_percent gauge\n"
-        f"app_cpu_usage_percent {cpu}\n\n"
-        f"# HELP app_memory_used_bytes Использовано памяти\n"
-        f"# TYPE app_memory_used_bytes gauge\n"
-        f"app_memory_used_bytes {mem.used}\n\n"
-        f"# HELP app_memory_total_bytes Всего памяти\n"
-        f"# TYPE app_memory_total_bytes gauge\n"
-        f"app_memory_total_bytes {mem.total}\n\n"
-        f"# HELP app_visits_last_hour_total Посещений за последний час\n"
-        f"# TYPE app_visits_last_hour_total gauge\n"
-        f"app_visits_last_hour_total {len(visit_timestamps)}\n\n"
-        f"# HELP app_button_clicks_total Всего кликов по кнопке\n"
-        f"# TYPE app_button_clicks_total counter\n"
-        f"app_button_clicks_total {click_counter}\n"
-    )
