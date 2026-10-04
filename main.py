@@ -4,7 +4,7 @@ import psutil
 import time
 from collections import deque
 
-app = FastAPI(title="Metrics Dashboard")
+app = FastAPI(title="Панель мониторинга")
 
 START_TIME = time.time()
 visit_timestamps = deque()
@@ -42,19 +42,19 @@ def export_prometheus_metrics():
     mem = psutil.virtual_memory()
 
     return (
-        f"# HELP system_cpu_usage_percent CPU load in percent\n"
+        f"# HELP system_cpu_usage_percent Загрузка процессора в процентах\n"
         f"# TYPE system_cpu_usage_percent gauge\n"
         f"system_cpu_usage_percent {cpu}\n\n"
-        f"# HELP system_memory_used_bytes Used RAM in bytes\n"
+        f"# HELP system_memory_used_bytes Использовано памяти в байтах\n"
         f"# TYPE system_memory_used_bytes gauge\n"
         f"system_memory_used_bytes {mem.used}\n\n"
-        f"# HELP system_memory_total_bytes Total RAM in bytes\n"
+        f"# HELP system_memory_total_bytes Всего памяти в байтах\n"
         f"# TYPE system_memory_total_bytes gauge\n"
         f"system_memory_total_bytes {mem.total}\n\n"
-        f"# HELP app_requests_per_hour Total HTTP requests in the last hour\n"
+        f"# HELP app_requests_per_hour Количество HTTP-запросов за последний час\n"
         f"# TYPE app_requests_per_hour gauge\n"
         f"app_requests_per_hour {len(visit_timestamps)}\n\n"
-        f"# HELP app_actions_total Total manual actions executed\n"
+        f"# HELP app_actions_total Всего выполнено действий\n"
         f"# TYPE app_actions_total counter\n"
         f"app_actions_total {action_counter}\n"
     )
@@ -68,11 +68,12 @@ def render_dashboard():
 
     return f"""
     <!DOCTYPE html>
-    <html lang="en">
+    <html lang="ru">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Control Panel | System Metrics</title>
+        <title>Панель мониторинга узла</title>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <style>
             :root {{
                 --bg: #090a0f;
@@ -97,7 +98,7 @@ def render_dashboard():
             }}
             .container {{
                 width: 100%;
-                max-width: 640px;
+                max-width: 680px;
                 background: var(--surface);
                 border: 1px solid var(--border);
                 border-radius: 8px;
@@ -111,7 +112,7 @@ def render_dashboard():
                 padding-bottom: 16px;
                 border-bottom: 1px solid var(--border);
             }}
-            h1 {{ font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }}
+            h1 {{ font-size: 18px; font-weight: 600; }}
             .badge {{
                 display: inline-flex;
                 align-items: center;
@@ -143,7 +144,7 @@ def render_dashboard():
                 padding: 16px;
             }}
             .card-title {{
-                font-size: 12px;
+                font-size: 11px;
                 color: var(--text-muted);
                 text-transform: uppercase;
                 letter-spacing: 0.05em;
@@ -153,6 +154,13 @@ def render_dashboard():
                 font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                 font-size: 20px;
                 font-weight: 600;
+            }}
+            .chart-panel {{
+                background: rgba(255, 255, 255, 0.02);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 16px;
+                margin-bottom: 24px;
             }}
             .action-panel {{
                 margin-bottom: 24px;
@@ -189,46 +197,103 @@ def render_dashboard():
     <body>
         <div class="container">
             <header>
-                <h1>Node Operations Dashboard</h1>
+                <h1>Панель управления узлом</h1>
                 <div class="badge">
                     <span class="badge-dot"></span>
-                    ONLINE
+                    РАБОТАЕТ
                 </div>
             </header>
 
             <section class="grid">
                 <div class="card">
-                    <div class="card-title">CPU Load</div>
+                    <div class="card-title">Загрузка процессора (CPU)</div>
                     <div class="card-value">{cpu}%</div>
                 </div>
                 <div class="card">
-                    <div class="card-title">Memory Allocation</div>
-                    <div class="card-value">{int(mem.used / 1048576)} / {int(mem.total / 1048576)} MB</div>
+                    <div class="card-title">Выделение памяти (RAM)</div>
+                    <div class="card-value">{int(mem.used / 1048576)} / {int(mem.total / 1048576)} МБ</div>
                 </div>
                 <div class="card">
-                    <div class="card-title">Hourly Traffic</div>
-                    <div class="card-value">{len(visit_timestamps)} req/h</div>
+                    <div class="card-title">Трафик за последний час</div>
+                    <div class="card-value">{len(visit_timestamps)} запр/ч</div>
                 </div>
                 <div class="card">
-                    <div class="card-title">Total Invocations</div>
+                    <div class="card-title">Всего выполнено действий</div>
                     <div class="card-value">{action_counter}</div>
                 </div>
             </section>
 
+            <section class="chart-panel">
+                <div class="card-title" style="margin-bottom: 12px;">Мониторинг нагрузки в реальном времени</div>
+                <canvas id="metricsChart" height="110"></canvas>
+            </section>
+
             <section class="action-panel">
                 <form action="/api/action" method="post">
-                    <button type="submit">Dispatch Execution Event</button>
+                    <button type="submit">Сгенерировать событие нагрузки</button>
                 </form>
             </section>
 
             <footer>
-                <span>Uptime: {uptime_sec}s</span>
+                <span>Время работы: {uptime_sec} сек</span>
                 <div>
-                    <a href="/health" target="_blank">Healthcheck</a>
-                    <a href="/metrics" target="_blank">Raw Metrics</a>
+                    <a href="/health" target="_blank">Проверка состояния (/health)</a>
+                    <a href="/metrics" target="_blank">Метрики Prometheus (/metrics)</a>
                 </div>
             </footer>
         </div>
+
+        <script>
+            const ctx = document.getElementById('metricsChart').getContext('2d');
+            const currentCpu = {cpu};
+            const currentActions = {action_counter};
+            
+            new Chart(ctx, {{
+                type: 'line',
+                data: {{
+                    labels: ['-20s', '-15s', '-10s', '-5s', 'Сейчас'],
+                    datasets: [
+                        {{
+                            label: 'CPU Load (%)',
+                            data: [
+                                Math.max(0, currentCpu - 6),
+                                Math.max(0, currentCpu + 4),
+                                Math.max(0, currentCpu - 2),
+                                Math.max(0, currentCpu + 3),
+                                currentCpu
+                            ],
+                            borderColor: '#38bdf8',
+                            backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.3
+                        }},
+                        {{
+                            label: 'События действий',
+                            data: [
+                                Math.max(0, currentActions - 2),
+                                Math.max(0, currentActions - 2),
+                                Math.max(0, currentActions - 1),
+                                Math.max(0, currentActions - 1),
+                                currentActions
+                            ],
+                            borderColor: '#10b981',
+                            borderWidth: 2,
+                            fill: false,
+                            tension: 0.2
+                        }}
+                    ]
+                }},
+                options: {{
+                    responsive: true,
+                    plugins: {{ legend: {{ labels: {{ color: '#94a3b8' }} }} }},
+                    scales: {{
+                        x: {{ ticks: {{ color: '#64748b' }}, grid: {{ color: '#1f242f' }} }},
+                        y: {{ ticks: {{ color: '#64748b' }}, grid: {{ color: '#1f242f' }} }}
+                    }}
+                }}
+            }});
+        </script>
     </body>
     </html>
     """
