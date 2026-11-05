@@ -4,6 +4,8 @@ import psutil
 import time
 from collections import deque
 
+raise RuntimeError("drill")
+
 app = FastAPI(title="Панель мониторинга")
 
 START_TIME = time.time()
