@@ -1,4 +1,3 @@
-raise RuntimeError("drill: broken startup")
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, PlainTextResponse
 import psutil
